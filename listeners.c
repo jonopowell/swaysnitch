@@ -50,6 +50,40 @@ const struct wl_touch_listener touch_listener = {
 	.cancel = touch_cancel,
 };
 
+// Text Input Listener
+#include "text-input-unstable-v1-client-protocol.h"
+
+void text_input_commit_string_wrapper(void *data, struct zwp_text_input_v1 *ti, uint32_t serial, const char *text) {
+	if (text) text_input_commit_string(data, ti, serial, (char*)text);
+}
+
+void text_input_preedit_string_stub(void *data, struct zwp_text_input_v1 *ti, uint32_t serial, const char *text, const char *commit) {}
+void text_input_modifiers_map_stub(void *data, struct zwp_text_input_v1 *ti, struct wl_array *map) {}
+void text_input_input_panel_state_stub(void *data, struct zwp_text_input_v1 *ti, uint32_t state) {}
+void text_input_preedit_styling_stub(void *data, struct zwp_text_input_v1 *ti, uint32_t index, uint32_t length, uint32_t style) {}
+void text_input_preedit_cursor_stub(void *data, struct zwp_text_input_v1 *ti, int32_t index) {}
+void text_input_cursor_position_stub(void *data, struct zwp_text_input_v1 *ti, int32_t index, int32_t anchor) {}
+void text_input_delete_surrounding_text_stub(void *data, struct zwp_text_input_v1 *ti, int32_t index, uint32_t length) {}
+void text_input_keysym_stub(void *data, struct zwp_text_input_v1 *ti, uint32_t serial, uint32_t time, uint32_t sym, uint32_t state, uint32_t modifiers) {}
+void text_input_language_stub(void *data, struct zwp_text_input_v1 *ti, uint32_t serial, const char *language) {}
+void text_input_text_direction_stub(void *data, struct zwp_text_input_v1 *ti, uint32_t serial, uint32_t direction) {}
+
+const struct zwp_text_input_v1_listener text_input_listener = {
+	.enter = text_input_enter,
+	.leave = text_input_leave,
+	.modifiers_map = text_input_modifiers_map_stub,
+	.input_panel_state = text_input_input_panel_state_stub,
+	.preedit_string = text_input_preedit_string_stub,
+	.preedit_styling = text_input_preedit_styling_stub,
+	.preedit_cursor = text_input_preedit_cursor_stub,
+	.commit_string = text_input_commit_string_wrapper,
+	.cursor_position = text_input_cursor_position_stub,
+	.delete_surrounding_text = text_input_delete_surrounding_text_stub,
+	.keysym = text_input_keysym_stub,
+	.language = text_input_language_stub,
+	.text_direction = text_input_text_direction_stub,
+};
+
 const struct xdg_wm_base_listener xdg_wm_base_listener = {
 	.ping = xdg_wm_base_ping,
 };
