@@ -13,6 +13,7 @@ package main
 
 #include "xdg-shell-client-protocol.h"
 #include "text-input-unstable-v1-client-protocol.h"
+#include "text-input-unstable-v3-client-protocol.h"
 
 // Forward declarations for listener callbacks (CGo exported functions)
 void registry_global(void *data, struct wl_registry *registry, uint32_t name, char *interface, uint32_t version);
@@ -25,6 +26,11 @@ void seat_name(void *data, struct wl_seat *wl_seat, char *name);
 void text_input_commit_string(void *data, struct zwp_text_input_v1 *text_input, uint32_t serial, char *text);
 void text_input_enter(void *data, struct zwp_text_input_v1 *text_input, struct wl_surface *surface);
 void text_input_leave(void *data, struct zwp_text_input_v1 *text_input);
+
+// Text Input V3 C wrappers
+void text_input_v3_commit_string(void *data, struct zwp_text_input_v3 *text_input, char *text);
+void text_input_v3_enter(void *data, struct zwp_text_input_v3 *text_input, struct wl_surface *surface);
+void text_input_v3_leave(void *data, struct zwp_text_input_v3 *text_input, struct wl_surface *surface);
 
 // Listener structs (implemented in listeners.c)
 extern const struct wl_registry_listener registry_listener;
@@ -68,6 +74,7 @@ extern const struct xdg_wm_base_listener xdg_wm_base_listener;
 extern const struct xdg_surface_listener xdg_surface_listener;
 extern const struct xdg_toplevel_listener xdg_toplevel_listener;
 extern const struct zwp_text_input_v1_listener text_input_listener;
+extern const struct zwp_text_input_v3_listener text_input_v3_listener;
 
 */
 import "C"
@@ -84,12 +91,13 @@ import (
 var appState *AppState
 
 type Seat struct {
-	seat      *C.struct_wl_seat
-	pointer   *C.struct_wl_pointer
-	keyboard  *C.struct_wl_keyboard
-	touch     *C.struct_wl_touch
-	textInput *C.struct_zwp_text_input_v1
-	name      string
+	seat        *C.struct_wl_seat
+	pointer     *C.struct_wl_pointer
+	keyboard    *C.struct_wl_keyboard
+	touch       *C.struct_wl_touch
+	textInput   *C.struct_zwp_text_input_v1
+	textInputV3 *C.struct_zwp_text_input_v3
+	name        string
 }
 
 type AppState struct {
@@ -98,9 +106,11 @@ type AppState struct {
 	compositor *C.struct_wl_compositor
 	shm        *C.struct_wl_shm
 
-	textInputManager *C.struct_zwp_text_input_manager_v1
-    textInput        *C.struct_zwp_text_input_v1
-    activeInput      bool
+	textInputManager   *C.struct_zwp_text_input_manager_v1
+	textInputManagerV3 *C.struct_zwp_text_input_manager_v3
+	textInput          *C.struct_zwp_text_input_v1
+	textInputV3        *C.struct_zwp_text_input_v3
+	activeInput        bool
 
 	seats []*Seat
 
@@ -113,8 +123,8 @@ type AppState struct {
 	height     int32
 	closed     bool
 	configured bool
-    
-    cursorX, cursorY int
+
+	cursorX, cursorY int
 
 	buffer   *C.struct_wl_buffer
 	shm_data []byte
@@ -226,8 +236,8 @@ func Draw() {
 			off := (by*w + bx) * 4
 			if off+3 < len(appState.shm_data) {
 				// ARGB8888 in Little Endian is B G R A
-				appState.shm_data[off] = byte(color)       // B
-				appState.shm_data[off+1] = byte(color >> 8) // G
+				appState.shm_data[off] = byte(color)         // B
+				appState.shm_data[off+1] = byte(color >> 8)  // G
 				appState.shm_data[off+2] = byte(color >> 16) // R
 				appState.shm_data[off+3] = byte(color >> 24) // A
 			}
@@ -273,6 +283,8 @@ func registry_global(data unsafe.Pointer, registry *C.struct_wl_registry, name C
 		C.wl_seat_add_listener(seatPtr, &C.seat_listener, nil)
 	} else if ifName == "zwp_text_input_manager_v1" {
 		appState.textInputManager = (*C.struct_zwp_text_input_manager_v1)(C.wl_registry_bind(registry, name, &C.zwp_text_input_manager_v1_interface, 1))
+	} else if ifName == "zwp_text_input_manager_v3" {
+		appState.textInputManagerV3 = (*C.struct_zwp_text_input_manager_v3)(C.wl_registry_bind(registry, name, &C.zwp_text_input_manager_v3_interface, 1))
 	}
 }
 
@@ -395,14 +407,24 @@ func pointer_button(data unsafe.Pointer, wl_pointer *C.struct_wl_pointer, serial
 				C.zwp_text_input_v1_show_input_panel(appState.textInput)
 				C.zwp_text_input_v1_activate(appState.textInput, appState.seats[0].seat, appState.surface)
 				appState.activeInput = true
-				AddEvent("OSK Activated")
+				AddEvent("OSK V1 Activated")
+			}
+			if appState.textInputV3 != nil && len(appState.seats) > 0 {
+				C.zwp_text_input_v3_enable(appState.textInputV3)
+				C.zwp_text_input_v3_commit(appState.textInputV3)
+				appState.activeInput = true
+				AddEvent("OSK V3 Activated")
 			}
 		} else {
 			// Deactivate if clicking elsewhere
-			if appState.textInput != nil && appState.activeInput {
-				if len(appState.seats) > 0 {
+			if appState.activeInput {
+				if appState.textInput != nil && len(appState.seats) > 0 {
 					C.zwp_text_input_v1_deactivate(appState.textInput, appState.seats[0].seat)
 					C.zwp_text_input_v1_hide_input_panel(appState.textInput)
+				}
+				if appState.textInputV3 != nil {
+					C.zwp_text_input_v3_disable(appState.textInputV3)
+					C.zwp_text_input_v3_commit(appState.textInputV3)
 				}
 				appState.activeInput = false
 				AddEvent("OSK Deactivated")
@@ -482,7 +504,7 @@ func touch_cancel(data unsafe.Pointer, wl_touch *C.struct_wl_touch) { AddEvent("
 //export text_input_commit_string
 func text_input_commit_string(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v1, serial C.uint32_t, text *C.char) {
 	str := C.GoString(text)
-	AddEvent(fmt.Sprintf("Text Input: %s", str))
+	AddEvent(fmt.Sprintf("Text V1: %s", str))
 }
 
 //export text_input_enter
@@ -492,7 +514,23 @@ func text_input_enter(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v
 
 //export text_input_leave
 func text_input_leave(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v1) {
-	AddEvent("Text Input Leave")
+	AddEvent("Text V1: Input Leave")
+}
+
+//export text_input_v3_commit_string
+func text_input_v3_commit_string(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v3, text *C.char) {
+	str := C.GoString(text)
+	AddEvent(fmt.Sprintf("Text V3: %s", str))
+}
+
+//export text_input_v3_enter
+func text_input_v3_enter(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v3, surface *C.struct_wl_surface) {
+	AddEvent("Text V3: Input Enter")
+}
+
+//export text_input_v3_leave
+func text_input_v3_leave(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v3, surface *C.struct_wl_surface) {
+	AddEvent("Text V3: Input Leave")
 }
 
 // Key map
@@ -519,6 +557,11 @@ func main() {
 	if appState.textInputManager != nil {
 		appState.textInput = C.zwp_text_input_manager_v1_create_text_input(appState.textInputManager)
 		C.zwp_text_input_v1_add_listener(appState.textInput, &C.text_input_listener, nil)
+	}
+
+	if appState.textInputManagerV3 != nil && len(appState.seats) > 0 {
+		appState.textInputV3 = C.zwp_text_input_manager_v3_get_text_input(appState.textInputManagerV3, appState.seats[0].seat)
+		C.zwp_text_input_v3_add_listener(appState.textInputV3, &C.text_input_v3_listener, nil)
 	}
 
 	appState.surface = C.wl_compositor_create_surface(appState.compositor)

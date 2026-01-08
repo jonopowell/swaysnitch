@@ -1,6 +1,8 @@
 #include <wayland-client.h>
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
+
+#include "text-input-unstable-v3-client-protocol.h"
 #include "_cgo_export.h" // For Go callback references
 
 // Wrappers to handle const char* vs char* mismatch (if needed, but simpler to just cast in the struct init if compiler allows, or keep wrapper)
@@ -82,6 +84,25 @@ const struct zwp_text_input_v1_listener text_input_listener = {
 	.keysym = text_input_keysym_stub,
 	.language = text_input_language_stub,
 	.text_direction = text_input_text_direction_stub,
+};
+
+// Text Input V3 Listener
+
+void text_input_v3_commit_string_wrapper(void *data, struct zwp_text_input_v3 *ti, const char *text) {
+	if (text) text_input_v3_commit_string(data, ti, (char*)text);
+}
+
+void text_input_v3_preedit_string_stub(void *data, struct zwp_text_input_v3 *ti, const char *text, int32_t cursor_begin, int32_t cursor_end) {}
+void text_input_v3_delete_surrounding_text_stub(void *data, struct zwp_text_input_v3 *ti, uint32_t before_length, uint32_t after_length) {}
+void text_input_v3_done_stub(void *data, struct zwp_text_input_v3 *ti, uint32_t serial) {}
+
+const struct zwp_text_input_v3_listener text_input_v3_listener = {
+	.enter = text_input_v3_enter,
+	.leave = text_input_v3_leave,
+	.preedit_string = text_input_v3_preedit_string_stub,
+	.commit_string = text_input_v3_commit_string_wrapper,
+	.delete_surrounding_text = text_input_v3_delete_surrounding_text_stub,
+	.done = text_input_v3_done_stub,
 };
 
 const struct xdg_wm_base_listener xdg_wm_base_listener = {
