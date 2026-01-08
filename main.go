@@ -12,6 +12,7 @@ package main
 #include <sys/mman.h>
 
 #include "xdg-shell-client-protocol.h"
+#include "text-input-unstable-v1-client-protocol.h"
 
 // Forward declarations for listener callbacks (CGo exported functions)
 void registry_global(void *data, struct wl_registry *registry, uint32_t name, char *interface, uint32_t version);
@@ -20,7 +21,14 @@ void registry_global_remove(void *data, struct wl_registry *registry, uint32_t n
 void seat_capabilities(void *data, struct wl_seat *wl_seat, uint32_t capabilities);
 void seat_name(void *data, struct wl_seat *wl_seat, char *name);
 
-// Wrappers (implemented in listeners.c)
+// Text Input C wrappers
+void text_input_commit_string(void *data, struct zwp_text_input_v1 *text_input, uint32_t serial, char *text);
+void text_input_enter(void *data, struct zwp_text_input_v1 *text_input, struct wl_surface *surface);
+void text_input_leave(void *data, struct zwp_text_input_v1 *text_input);
+
+// Listener structs (implemented in listeners.c)
+extern const struct wl_registry_listener registry_listener;
+extern const struct wl_seat_listener seat_listener;
 
 // Input callbacks
 void pointer_enter(void *data, struct wl_pointer *wl_pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y);
@@ -59,6 +67,7 @@ extern const struct wl_touch_listener touch_listener;
 extern const struct xdg_wm_base_listener xdg_wm_base_listener;
 extern const struct xdg_surface_listener xdg_surface_listener;
 extern const struct xdg_toplevel_listener xdg_toplevel_listener;
+extern const struct zwp_text_input_v1_listener text_input_listener;
 
 */
 import "C"
@@ -74,26 +83,38 @@ import (
 
 var appState *AppState
 
+type Seat struct {
+	seat      *C.struct_wl_seat
+	pointer   *C.struct_wl_pointer
+	keyboard  *C.struct_wl_keyboard
+	touch     *C.struct_wl_touch
+	textInput *C.struct_zwp_text_input_v1
+	name      string
+}
+
 type AppState struct {
 	display    *C.struct_wl_display
 	registry   *C.struct_wl_registry
 	compositor *C.struct_wl_compositor
 	shm        *C.struct_wl_shm
-	seat       *C.struct_wl_seat
+
+	textInputManager *C.struct_zwp_text_input_manager_v1
+    textInput        *C.struct_zwp_text_input_v1
+    activeInput      bool
+
+	seats []*Seat
 
 	xdgWmBase   *C.struct_xdg_wm_base
 	surface     *C.struct_wl_surface
 	xdgSurface  *C.struct_xdg_surface
 	xdgToplevel *C.struct_xdg_toplevel
 
-	pointer  *C.struct_wl_pointer
-	keyboard *C.struct_wl_keyboard
-	touch    *C.struct_wl_touch
-
 	width      int32
 	height     int32
 	closed     bool
 	configured bool
+    
+    cursorX, cursorY int
 
 	buffer   *C.struct_wl_buffer
 	shm_data []byte
@@ -107,6 +128,7 @@ func init() {
 		width:  800,
 		height: 600,
 		events: make([]string, 0),
+		seats:  make([]*Seat, 0),
 	}
 }
 
@@ -194,6 +216,25 @@ func Draw() {
 	DrawString(appState.shm_data, w, "Waysnitch (Pure Wayland/XDG Shell)", 10, y, 0xFF00FF00)
 	y += 20
 
+	// Draw Input Box at (50, 400) size 300x40
+	color := uint32(0xFF808080) // Grey
+	if appState.activeInput {
+		color = 0xFFFFFFFF // White
+	}
+	for by := 400; by < 440; by++ {
+		for bx := 50; bx < 350; bx++ {
+			off := (by*w + bx) * 4
+			if off+3 < len(appState.shm_data) {
+				// ARGB8888 in Little Endian is B G R A
+				appState.shm_data[off] = byte(color)       // B
+				appState.shm_data[off+1] = byte(color >> 8) // G
+				appState.shm_data[off+2] = byte(color >> 16) // R
+				appState.shm_data[off+3] = byte(color >> 24) // A
+			}
+		}
+	}
+	DrawString(appState.shm_data, w, "Click for Keyboard", 60, 415, 0xFF000000)
+
 	for _, evt := range events {
 		DrawString(appState.shm_data, w, evt, 10, y, 0xFFFFFFFF)
 		y += 15
@@ -226,8 +267,12 @@ func registry_global(data unsafe.Pointer, registry *C.struct_wl_registry, name C
 		appState.xdgWmBase = (*C.struct_xdg_wm_base)(C.wl_registry_bind(registry, name, &C.xdg_wm_base_interface, 1))
 		C.xdg_wm_base_add_listener(appState.xdgWmBase, &C.xdg_wm_base_listener, nil)
 	} else if ifName == "wl_seat" {
-		appState.seat = (*C.struct_wl_seat)(C.wl_registry_bind(registry, name, &C.wl_seat_interface, 4)) // Bind v4 just in case
-		C.wl_seat_add_listener(appState.seat, &C.seat_listener, nil)
+		seatPtr := (*C.struct_wl_seat)(C.wl_registry_bind(registry, name, &C.wl_seat_interface, 4)) // Bind v4 just in case
+		newSeat := &Seat{seat: seatPtr}
+		appState.seats = append(appState.seats, newSeat)
+		C.wl_seat_add_listener(seatPtr, &C.seat_listener, nil)
+	} else if ifName == "zwp_text_input_manager_v1" {
+		appState.textInputManager = (*C.struct_zwp_text_input_manager_v1)(C.wl_registry_bind(registry, name, &C.zwp_text_input_manager_v1_interface, 1))
 	}
 }
 
@@ -238,26 +283,51 @@ func registry_global_remove(data unsafe.Pointer, registry *C.struct_wl_registry,
 func seat_capabilities(data unsafe.Pointer, wl_seat *C.struct_wl_seat, capabilities C.uint32_t) {
 	log.Printf("Seat capabilities: %d", capabilities)
 
+	// Find the seat
+	var currentSeat *Seat
+	for _, s := range appState.seats {
+		if s.seat == wl_seat {
+			currentSeat = s
+			break
+		}
+	}
+	if currentSeat == nil {
+		log.Println("Error: Seat capabilities event for unknown seat")
+		return
+	}
+
 	if (capabilities & C.WL_SEAT_CAPABILITY_POINTER) != 0 {
 		log.Println("Seat has Pointer")
-		appState.pointer = C.wl_seat_get_pointer(wl_seat)
-		C.wl_pointer_add_listener(appState.pointer, &C.pointer_listener, nil)
+		currentSeat.pointer = C.wl_seat_get_pointer(wl_seat)
+		C.wl_pointer_add_listener(currentSeat.pointer, &C.pointer_listener, nil)
 	}
 	if (capabilities & C.WL_SEAT_CAPABILITY_KEYBOARD) != 0 {
 		log.Println("Seat has Keyboard")
-		appState.keyboard = C.wl_seat_get_keyboard(wl_seat)
-		C.wl_keyboard_add_listener(appState.keyboard, &C.keyboard_listener, nil)
+		currentSeat.keyboard = C.wl_seat_get_keyboard(wl_seat)
+		C.wl_keyboard_add_listener(currentSeat.keyboard, &C.keyboard_listener, nil)
 	}
 	if (capabilities & C.WL_SEAT_CAPABILITY_TOUCH) != 0 {
 		log.Println("Seat has Touch")
-		appState.touch = C.wl_seat_get_touch(wl_seat)
-		C.wl_touch_add_listener(appState.touch, &C.touch_listener, nil)
+		currentSeat.touch = C.wl_seat_get_touch(wl_seat)
+		C.wl_touch_add_listener(currentSeat.touch, &C.touch_listener, nil)
 	}
 }
 
 //export seat_name
 func seat_name(data unsafe.Pointer, wl_seat *C.struct_wl_seat, name *C.char) {
-	log.Printf("Seat name: %s", C.GoString(name))
+	seatName := C.GoString(name)
+	log.Printf("Seat name: %s", seatName)
+
+	var currentSeat *Seat
+	for _, s := range appState.seats {
+		if s.seat == wl_seat {
+			currentSeat = s
+			break
+		}
+	}
+	if currentSeat != nil {
+		currentSeat.name = seatName
+	}
 }
 
 // -- XDG Shell --
@@ -310,6 +380,8 @@ func pointer_leave(data unsafe.Pointer, wl_pointer *C.struct_wl_pointer, serial 
 
 //export pointer_motion
 func pointer_motion(data unsafe.Pointer, wl_pointer *C.struct_wl_pointer, time C.uint32_t, surface_x C.wl_fixed_t, surface_y C.wl_fixed_t) {
+	appState.cursorX = int(surface_x) / 256
+	appState.cursorY = int(surface_y) / 256
 }
 
 //export pointer_button
@@ -317,6 +389,25 @@ func pointer_button(data unsafe.Pointer, wl_pointer *C.struct_wl_pointer, serial
 	s := "Release"
 	if state == 1 {
 		s = "Press"
+		// Check for click in text box (50, 400, 300, 40)
+		if appState.cursorX >= 50 && appState.cursorX <= 350 && appState.cursorY >= 400 && appState.cursorY <= 440 {
+			if appState.textInput != nil && len(appState.seats) > 0 {
+				C.zwp_text_input_v1_show_input_panel(appState.textInput)
+				C.zwp_text_input_v1_activate(appState.textInput, appState.seats[0].seat, appState.surface)
+				appState.activeInput = true
+				AddEvent("OSK Activated")
+			}
+		} else {
+			// Deactivate if clicking elsewhere
+			if appState.textInput != nil && appState.activeInput {
+				if len(appState.seats) > 0 {
+					C.zwp_text_input_v1_deactivate(appState.textInput, appState.seats[0].seat)
+					C.zwp_text_input_v1_hide_input_panel(appState.textInput)
+				}
+				appState.activeInput = false
+				AddEvent("OSK Deactivated")
+			}
+		}
 	}
 	AddEvent(fmt.Sprintf("Button %d %s", button, s))
 }
@@ -388,6 +479,22 @@ func touch_frame(data unsafe.Pointer, wl_touch *C.struct_wl_touch) {}
 //export touch_cancel
 func touch_cancel(data unsafe.Pointer, wl_touch *C.struct_wl_touch) { AddEvent("Touch Cancel") }
 
+//export text_input_commit_string
+func text_input_commit_string(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v1, serial C.uint32_t, text *C.char) {
+	str := C.GoString(text)
+	AddEvent(fmt.Sprintf("Text Input: %s", str))
+}
+
+//export text_input_enter
+func text_input_enter(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v1, surface *C.struct_wl_surface) {
+	AddEvent("Text Input Enter")
+}
+
+//export text_input_leave
+func text_input_leave(data unsafe.Pointer, text_input *C.struct_zwp_text_input_v1) {
+	AddEvent("Text Input Leave")
+}
+
 // Key map
 var scanCodeToChar = map[int]string{
 	1: "Esc", 30: "A", 31: "S", 32: "D", 33: "F", 34: "G", 35: "H", 36: "J", 37: "K", 38: "L",
@@ -407,6 +514,11 @@ func main() {
 
 	if appState.compositor == nil || appState.shm == nil || appState.xdgWmBase == nil {
 		log.Fatal("Missing required Wayland globals (compositor, shm, or xdg_wm_base)")
+	}
+
+	if appState.textInputManager != nil {
+		appState.textInput = C.zwp_text_input_manager_v1_create_text_input(appState.textInputManager)
+		C.zwp_text_input_v1_add_listener(appState.textInput, &C.text_input_listener, nil)
 	}
 
 	appState.surface = C.wl_compositor_create_surface(appState.compositor)
