@@ -91,13 +91,13 @@ import (
 var appState *AppState
 
 type Seat struct {
-	seat      *C.struct_wl_seat
-	pointer   *C.struct_wl_pointer
-	keyboard  *C.struct_wl_keyboard
-	touch     *C.struct_wl_touch
-	textInput *C.struct_zwp_text_input_v1
-    textInputV3 *C.struct_zwp_text_input_v3
-	name      string
+	seat        *C.struct_wl_seat
+	pointer     *C.struct_wl_pointer
+	keyboard    *C.struct_wl_keyboard
+	touch       *C.struct_wl_touch
+	textInput   *C.struct_zwp_text_input_v1
+	textInputV3 *C.struct_zwp_text_input_v3
+	name        string
 }
 
 type AppState struct {
@@ -106,11 +106,11 @@ type AppState struct {
 	compositor *C.struct_wl_compositor
 	shm        *C.struct_wl_shm
 
-	textInputManager *C.struct_zwp_text_input_manager_v1
-    textInputManagerV3 *C.struct_zwp_text_input_manager_v3
-    textInput        *C.struct_zwp_text_input_v1
-    textInputV3      *C.struct_zwp_text_input_v3
-    activeInput      bool
+	textInputManager   *C.struct_zwp_text_input_manager_v1
+	textInputManagerV3 *C.struct_zwp_text_input_manager_v3
+	textInput          *C.struct_zwp_text_input_v1
+	textInputV3        *C.struct_zwp_text_input_v3
+	activeInput        bool
 
 	seats []*Seat
 
@@ -123,8 +123,8 @@ type AppState struct {
 	height     int32
 	closed     bool
 	configured bool
-    
-    cursorX, cursorY int
+
+	cursorX, cursorY int
 
 	buffer   *C.struct_wl_buffer
 	shm_data []byte
@@ -236,8 +236,8 @@ func Draw() {
 			off := (by*w + bx) * 4
 			if off+3 < len(appState.shm_data) {
 				// ARGB8888 in Little Endian is B G R A
-				appState.shm_data[off] = byte(color)       // B
-				appState.shm_data[off+1] = byte(color >> 8) // G
+				appState.shm_data[off] = byte(color)         // B
+				appState.shm_data[off+1] = byte(color >> 8)  // G
 				appState.shm_data[off+2] = byte(color >> 16) // R
 				appState.shm_data[off+3] = byte(color >> 24) // A
 			}
@@ -409,23 +409,23 @@ func pointer_button(data unsafe.Pointer, wl_pointer *C.struct_wl_pointer, serial
 				appState.activeInput = true
 				AddEvent("OSK V1 Activated")
 			}
-            if appState.textInputV3 != nil && len(appState.seats) > 0 {
-                C.zwp_text_input_v3_enable(appState.textInputV3)
-                C.zwp_text_input_v3_commit(appState.textInputV3)
-                appState.activeInput = true
-                AddEvent("OSK V3 Activated")
-            }
+			if appState.textInputV3 != nil && len(appState.seats) > 0 {
+				C.zwp_text_input_v3_enable(appState.textInputV3)
+				C.zwp_text_input_v3_commit(appState.textInputV3)
+				appState.activeInput = true
+				AddEvent("OSK V3 Activated")
+			}
 		} else {
 			// Deactivate if clicking elsewhere
 			if appState.activeInput {
-                if appState.textInput != nil && len(appState.seats) > 0 {
-                    C.zwp_text_input_v1_deactivate(appState.textInput, appState.seats[0].seat)
-                    C.zwp_text_input_v1_hide_input_panel(appState.textInput)
-                }
-                if appState.textInputV3 != nil {
-                    C.zwp_text_input_v3_disable(appState.textInputV3)
-                    C.zwp_text_input_v3_commit(appState.textInputV3)
-                }
+				if appState.textInput != nil && len(appState.seats) > 0 {
+					C.zwp_text_input_v1_deactivate(appState.textInput, appState.seats[0].seat)
+					C.zwp_text_input_v1_hide_input_panel(appState.textInput)
+				}
+				if appState.textInputV3 != nil {
+					C.zwp_text_input_v3_disable(appState.textInputV3)
+					C.zwp_text_input_v3_commit(appState.textInputV3)
+				}
 				appState.activeInput = false
 				AddEvent("OSK Deactivated")
 			}
@@ -559,7 +559,7 @@ func main() {
 		C.zwp_text_input_v1_add_listener(appState.textInput, &C.text_input_listener, nil)
 	}
 
-    if appState.textInputManagerV3 != nil && len(appState.seats) > 0 {
+	if appState.textInputManagerV3 != nil && len(appState.seats) > 0 {
 		appState.textInputV3 = C.zwp_text_input_manager_v3_get_text_input(appState.textInputManagerV3, appState.seats[0].seat)
 		C.zwp_text_input_v3_add_listener(appState.textInputV3, &C.text_input_v3_listener, nil)
 	}
