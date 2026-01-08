@@ -1,0 +1,71 @@
+# Waysnitch - Wayland Keyboard Event Logger
+
+A custom Wayland client application written in Go that captures and displays keyboard input events in a graphical window.
+
+## Features
+
+- Custom Wayland client (no GTK/Qt dependencies)
+- Real-time keyboard event capture
+- Cairo-based graphical rendering
+- Scrollable text view with monospace font
+- Event timestamps for debugging
+- Scroll wheel support for event history navigation
+- Dark theme UI with green title text
+
+## Requirements
+
+- Go 1.21 or later
+- A running Wayland compositor (GNOME, KDE, Sway, etc.)
+- Cairo development libraries (`libcairo2-dev` on Ubuntu/Debian, `cairo` on Arch)
+- Wayland development libraries
+
+## Building
+
+```bash
+cd /path/to/waysnitch
+go mod download
+go build -o waysnitch
+```
+
+Or use the build script:
+```bash
+bash build.sh
+```
+
+## Running
+
+```bash
+./waysnitch
+```
+
+The application will create a window and begin logging all keyboard input events.
+
+## Event Types Captured
+
+- **Keymap**: Keyboard layout information received from the compositor
+- **Key Press/Release**: Individual key events with keycodes and timestamps
+- **Keyboard Enter/Leave**: Keyboard focus changes (when window gains/loses focus)
+- **Modifiers**: Modifier key states (Shift, Ctrl, Alt, Lock)
+- **Repeat Info**: Keyboard repeat rate and delay settings
+
+## Architecture
+
+- **Window**: Main window structure managing Wayland surfaces and event handling
+- **KeyboardEventLog**: Thread-safe event storage with configurable max buffer size
+- **ScrollableTextView**: Text rendering with Cairo and scroll offset management
+- **Event Handlers**: Registered with Wayland keyboard and pointer objects
+
+## UI Controls
+
+- **Mouse Wheel**: Scroll through event history
+- **Title Bar**: Standard window decorations for move/resize/close
+
+## Example Output
+
+```
+=== Waysnitch - Keyboard Event Log ===
+[15:42:23.123] Key Press: keycode=17
+[15:42:23.234] Modifiers: [Shift Lock]
+[15:42:23.456] Key Release: keycode=17
+[15:42:24.100] Key Press: keycode=30
+```
