@@ -74,21 +74,26 @@ import (
 
 var appState *AppState
 
+type Seat struct {
+	seat     *C.struct_wl_seat
+	pointer  *C.struct_wl_pointer
+	keyboard *C.struct_wl_keyboard
+	touch    *C.struct_wl_touch
+	name     string
+}
+
 type AppState struct {
 	display    *C.struct_wl_display
 	registry   *C.struct_wl_registry
 	compositor *C.struct_wl_compositor
 	shm        *C.struct_wl_shm
-	seat       *C.struct_wl_seat
+	
+	seats      []*Seat
 
 	xdgWmBase   *C.struct_xdg_wm_base
 	surface     *C.struct_wl_surface
 	xdgSurface  *C.struct_xdg_surface
 	xdgToplevel *C.struct_xdg_toplevel
-
-	pointer  *C.struct_wl_pointer
-	keyboard *C.struct_wl_keyboard
-	touch    *C.struct_wl_touch
 
 	width      int32
 	height     int32
@@ -107,6 +112,7 @@ func init() {
 		width:  800,
 		height: 600,
 		events: make([]string, 0),
+		seats:  make([]*Seat, 0),
 	}
 }
 
@@ -226,8 +232,10 @@ func registry_global(data unsafe.Pointer, registry *C.struct_wl_registry, name C
 		appState.xdgWmBase = (*C.struct_xdg_wm_base)(C.wl_registry_bind(registry, name, &C.xdg_wm_base_interface, 1))
 		C.xdg_wm_base_add_listener(appState.xdgWmBase, &C.xdg_wm_base_listener, nil)
 	} else if ifName == "wl_seat" {
-		appState.seat = (*C.struct_wl_seat)(C.wl_registry_bind(registry, name, &C.wl_seat_interface, 4)) // Bind v4 just in case
-		C.wl_seat_add_listener(appState.seat, &C.seat_listener, nil)
+		seatPtr := (*C.struct_wl_seat)(C.wl_registry_bind(registry, name, &C.wl_seat_interface, 4)) // Bind v4 just in case
+		newSeat := &Seat{seat: seatPtr}
+		appState.seats = append(appState.seats, newSeat)
+		C.wl_seat_add_listener(seatPtr, &C.seat_listener, nil)
 	}
 }
 
@@ -238,26 +246,51 @@ func registry_global_remove(data unsafe.Pointer, registry *C.struct_wl_registry,
 func seat_capabilities(data unsafe.Pointer, wl_seat *C.struct_wl_seat, capabilities C.uint32_t) {
 	log.Printf("Seat capabilities: %d", capabilities)
 
+	// Find the seat
+	var currentSeat *Seat
+	for _, s := range appState.seats {
+		if s.seat == wl_seat {
+			currentSeat = s
+			break
+		}
+	}
+	if currentSeat == nil {
+		log.Println("Error: Seat capabilities event for unknown seat")
+		return
+	}
+
 	if (capabilities & C.WL_SEAT_CAPABILITY_POINTER) != 0 {
 		log.Println("Seat has Pointer")
-		appState.pointer = C.wl_seat_get_pointer(wl_seat)
-		C.wl_pointer_add_listener(appState.pointer, &C.pointer_listener, nil)
+		currentSeat.pointer = C.wl_seat_get_pointer(wl_seat)
+		C.wl_pointer_add_listener(currentSeat.pointer, &C.pointer_listener, nil)
 	}
 	if (capabilities & C.WL_SEAT_CAPABILITY_KEYBOARD) != 0 {
 		log.Println("Seat has Keyboard")
-		appState.keyboard = C.wl_seat_get_keyboard(wl_seat)
-		C.wl_keyboard_add_listener(appState.keyboard, &C.keyboard_listener, nil)
+		currentSeat.keyboard = C.wl_seat_get_keyboard(wl_seat)
+		C.wl_keyboard_add_listener(currentSeat.keyboard, &C.keyboard_listener, nil)
 	}
 	if (capabilities & C.WL_SEAT_CAPABILITY_TOUCH) != 0 {
 		log.Println("Seat has Touch")
-		appState.touch = C.wl_seat_get_touch(wl_seat)
-		C.wl_touch_add_listener(appState.touch, &C.touch_listener, nil)
+		currentSeat.touch = C.wl_seat_get_touch(wl_seat)
+		C.wl_touch_add_listener(currentSeat.touch, &C.touch_listener, nil)
 	}
 }
 
 //export seat_name
 func seat_name(data unsafe.Pointer, wl_seat *C.struct_wl_seat, name *C.char) {
-	log.Printf("Seat name: %s", C.GoString(name))
+	seatName := C.GoString(name)
+	log.Printf("Seat name: %s", seatName)
+
+	var currentSeat *Seat
+	for _, s := range appState.seats {
+		if s.seat == wl_seat {
+			currentSeat = s
+			break
+		}
+	}
+	if currentSeat != nil {
+		currentSeat.name = seatName
+	}
 }
 
 // -- XDG Shell --
